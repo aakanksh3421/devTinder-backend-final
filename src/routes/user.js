@@ -34,16 +34,16 @@ userRouter.get("/user/connections", userAuth, async (req, res) => {
         const loggedInUser = req.user;
 
         const connectionRequests = await ConnectionRequest.find({
-                $or: [{
-                        toUserId: loggedInUser._id,
-                        status: "accepted"
-                    },
-                    {
-                        fromUserId: loggedInUser._id,
-                        status: "accepted"
-                    },
-                ],
-            })
+            $or: [{
+                toUserId: loggedInUser._id,
+                status: "accepted"
+            },
+            {
+                fromUserId: loggedInUser._id,
+                status: "accepted"
+            },
+            ],
+        })
             .populate("fromUserId", USER_SAFE_DATA)
             .populate("toUserId", USER_SAFE_DATA);
 
@@ -66,6 +66,57 @@ userRouter.get("/user/connections", userAuth, async (req, res) => {
     }
 });
 
+userRouter.get("/explore", userAuth, async (req, res) => {
+  try {
+    const presentUser = req.user;
+
+    const connectionRequests = await ConnectionRequest.find({
+      $or: [
+        { fromUserId: presentUser._id },
+        { toUserId: presentUser._id }
+      ],
+    }).select("fromUserId toUserId");
+
+    const hideUsersFromFeed = new Set();
+    connectionRequests.forEach((req) => {
+      hideUsersFromFeed.add(req.fromUserId.toString());
+      hideUsersFromFeed.add(req.toUserId.toString());
+    });
+
+    hideUsersFromFeed.add(presentUser._id.toString());
+
+    const exploreData = await User.find({
+      _id: { $nin: Array.from(hideUsersFromFeed) }
+    }).select(USER_SAFE_DATA);
+
+    const hasConnection = await ConnectionRequest.find({
+        status: 'accepted'
+    }).select("fromUserId toUserId")
+
+    const connectedId = new Set();
+
+    hasConnection.forEach((user) => {
+        connectedId.add(user.fromUserId.toString());
+        connectedId.add(user.toUserId.toString())
+    })
+
+    const withConnectionStatus = exploreData.map(user => {
+        const currUserId = user._id.toString();
+        const status = connectedId.has(currUserId) ? "connected" : "notConnected"
+        return {
+            ...user.toObject(),
+            status
+        };
+
+    });
+
+    res.json({ data: withConnectionStatus });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+
 userRouter.get("/feed", userAuth, async (req, res) => {
     try {
         const loggedInUser = req.user;
@@ -83,25 +134,35 @@ userRouter.get("/feed", userAuth, async (req, res) => {
             }],
         }).select("fromUserId  toUserId");
 
+        const connected = await ConnectionRequest.find({
+            status: 'accepted'
+        })
+
+
         const hideUsersFromFeed = new Set();
         connectionRequests.forEach((req) => {
             hideUsersFromFeed.add(req.fromUserId.toString());
             hideUsersFromFeed.add(req.toUserId.toString());
         });
 
+        connected.forEach((req) => {
+            hideUsersFromFeed.add(req.fromUserId.toString());
+            hideUsersFromFeed.add(req.toUserId.toString());
+        })
+
         const users = await User.find({
-                $and: [{
-                        _id: {
-                            $nin: Array.from(hideUsersFromFeed)
-                        }
-                    },
-                    {
-                        _id: {
-                            $ne: loggedInUser._id
-                        }
-                    },
-                ],
-            })
+            $and: [{
+                _id: {
+                    $nin: Array.from(hideUsersFromFeed)
+                }
+            },
+            {
+                _id: {
+                    $ne: loggedInUser._id
+                }
+            },
+            ],
+        })
             .select(USER_SAFE_DATA)
         // .skip(skip)
         // .limit(limit);
